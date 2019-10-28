@@ -24,6 +24,20 @@ extern int RSI_PERIOD = 14;
 
 static int StopLoss = 0;
 
+double CalculateNormalizedDigits()
+{
+   //If there are 3 or less digits (JPY for example) then return 0.01 which is the pip value
+   if(Digits<=3){
+      return(0.01);
+   }
+   //If there are 4 or more digits then return 0.0001 which is the pip value
+   else if(Digits>=4){
+      return(0.0001);
+   }
+   //In all other cases (there shouldn't be any) return 0
+   else return(0);
+}
+
 void OnInit()
 {
     
@@ -41,19 +55,22 @@ void OnInit()
       ExpertRemove();
    } 
 }
+
+
 void OnTick()
 {
+   double nDigits=CalculateNormalizedDigits();
    static bool EARunning = false;
    static bool tradeRunning = false;
    
    static int ticket = 0;
    
    // BollingerBands
-   double upperBollingerBand = iBands(Symbol(), 0, BB_PERIOD, 2, 0, 0, 1, 1);
-   double lowerBollingerBand = iBands(Symbol(), 0, BB_PERIOD, 2, 0, 0, 2, 1);
+   double upperBollingerBand = iBands(Symbol(), 0, BB_PERIOD, 2, 0, 0, 1, 0);
+   double lowerBollingerBand = iBands(Symbol(), 0, BB_PERIOD, 2, 0, 0, 2, 0);
    
-   double prevUpperBollingerBand = iBands(Symbol(), 0, BB_PERIOD, 2, 0, 0, 1, 2);
-   double prevLowerBollingerBand = iBands(Symbol(), 0, BB_PERIOD, 2, 0, 0, 2, 2);
+   double prevUpperBollingerBand = iBands(Symbol(), 0, BB_PERIOD, 2, 0, 0, 1, 1);
+   double prevLowerBollingerBand = iBands(Symbol(), 0, BB_PERIOD, 2, 0, 0, 2, 1);
    
    // RSI
    double RSI = iRSI(Symbol(), 0, RSI_PERIOD, 0, 0);
@@ -81,12 +98,13 @@ void OnTick()
          // If Ask more than last close and 2nd candle is lower than lower band and last candle is higher than lower band (means movement upwards)
          if( (Ask > Close[1]) && (Close[2] < prevLowerBollingerBand) && Close[1] > lowerBollingerBand){
             // Open a buy after analysing RSI...
-            if(RSI > 20){
+            if(RSI < 20){
                double takeProfit = upperBollingerBand;
                // Open Buy for sure as currency pair is now been oversold
                if(!tradeRunning){
-                  Alert((Bid - StopLoss * Point), " SL Calculation Where BID: ", Bid, " StopLoss Pip: ", StopLoss, " Point: ", Point); 
-                  ticket = OrderSend(Symbol(), OP_BUY, Lots, Ask, 3, (Bid - StopLoss * Point), takeProfit, "Set by Kman Test EA");
+                  double currentSpreadInPips = MarketInfo(Symbol(), MODE_SPREAD )/10;
+                  Alert((Bid - ((StopLoss + currentSpreadInPips) * nDigits)), " SL Calculation Where BID: ", Bid, " StopLoss Pip: ", StopLoss, " Ndigits: ", nDigits, "Spread (Pts): ", MarketInfo(Symbol(), MODE_SPREAD )/10); 
+                  ticket = OrderSend(Symbol(), OP_BUY, Lots, Ask, 3, (Bid - (StopLoss * 10 * nDigits)), takeProfit, "Set by Kman Test EA");
                   if(ticket < 0){
                      Alert("Error in the attempt to send the order!");
                   }else{
@@ -96,16 +114,17 @@ void OnTick()
                }
             }
          
-         // else If Bid less than last close and 2nd candle is higher than band and last candle is less than hand (means movement downwards)   
+         // else If Bid less than last close and 2nd candle is higher than upper band and last candle is less than lower band (means movement downwards)   
          } 
          
          if( (Bid < Close[1]) && (Close[2] > prevUpperBollingerBand) && Close[1] < upperBollingerBand){
             // Open a sell after analysing RSI...
             if(RSI > 80){
-               double takeProfit = upperBollingerBand;
+               double takeProfit = lowerBollingerBand;
                // Open Sell for sure as currency pair is now been overbought
                if(!tradeRunning) {
-                  ticket = OrderSend(Symbol(), OP_SELL, Lots, Bid, 3, (Ask + StopLoss * Point), takeProfit, "Set by Kman Test EA");
+                  double currentSpreadInPips = MarketInfo(Symbol(), MODE_SPREAD )/10;
+                  ticket = OrderSend(Symbol(), OP_SELL, Lots, Bid, 3, (Ask + (((StopLoss * 10) + currentSpreadInPips) * nDigits)), takeProfit, "Set by Kman Test EA");
                   if(ticket < 0){
                      Alert("Error in the attempt to send the order!");
                   }else{
