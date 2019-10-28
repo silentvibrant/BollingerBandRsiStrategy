@@ -26,8 +26,11 @@ extern int RSI_PERIOD = 7;
 static int StopLoss = 0;
 
 static int point_compat;
+static int numberOfLosses = 0;
+static bool allowBUY = true;
+static bool allowSELL = true;
 
-void BreakPoint(double BBLevel = 0)
+void BreakPoint(string comment)
 {
    //It is expecting, that this function should work
    //only in tester
@@ -36,15 +39,16 @@ void BreakPoint(double BBLevel = 0)
    //Preparing a data for printing
    //Comment() function is used as 
    //it give quite clear visualisation
-   string Comm="";
+  /* string Comm="";
    Comm=Comm+"Bid="+Bid+"\n";
-   Comm=Comm+"Ask="+Ask+"\n";
+   Comm=Comm+"Ask="+Ask+"\n";*/
    
-   Comment(Comm);
+   Comment(comment);
+   Alert(comment);
    
-   if(BBLevel > 0){
+ /*  if(BBLevel > 0){
       Comment("BB Level:", BBLevel);
-   }
+   }*/
    
    //Press/release Pause button
    //19 is a Virtual Key code of "Pause" button
@@ -52,7 +56,7 @@ void BreakPoint(double BBLevel = 0)
    //to misprocess too quick pressing/releasing
    //of the button
    keybd_event(19,0,0,0);
-   Sleep(100);
+   Sleep(20000);
    keybd_event(19,0,2,0);
 }
 
@@ -73,6 +77,7 @@ double CalculateNormalizedDigits()
 
 void OnInit()
 {
+
    string financialInstrument = Symbol();
    if(financialInstrument == "EURUSD"){
       StopLoss = EURUSDSL;
@@ -90,11 +95,57 @@ void OnInit()
    if(Digits == 3 || Digits == 5) {
       static int point_compat = 10;
    }
+   
+   
+}
+
+void twoLossRule(){
+   int totalOrderArray = OrdersTotal() - 1;
+   int lastOrder = totalOrderArray;
+   int secondToLastOrder = totalOrderArray - 1;
+   if(OrderSelect(lastOrder, SELECT_BY_POS)){
+      bool lastOrderHitSL;
+      if(OrderType() == OP_BUY){
+          lastOrderHitSL = OrderClosePrice() <= OrderStopLoss();
+      }else{
+          lastOrderHitSL = OrderClosePrice() >= OrderStopLoss();
+      }
+      if(OrderCloseTime() != 0 && lastOrderHitSL){
+         if(OrderSelect(secondToLastOrder, SELECT_BY_POS)){
+            bool secondToLastOrderHitSL;
+            if(OrderType() == OP_BUY){
+                secondToLastOrderHitSL = OrderClosePrice() <= OrderStopLoss();
+            }else{
+                secondToLastOrderHitSL = OrderClosePrice() >= OrderStopLoss();
+            }
+            if(OrderCloseTime() != 0 && secondToLastOrderHitSL){
+               numberOfLosses += 1;
+               if(numberOfLosses >= 2){
+                  if(OrderType() == OP_BUY){
+                     allowBUY = false;
+                     numberOfLosses = 0;
+                  }else{
+                     // OP_SELL
+                     allowSELL = false;
+                     numberOfLosses = 0;
+                  }
+               }
+            }
+         }else{
+            BreakPoint("Two loss rule stopped");
+         }
+      } 
+   }else{
+      BreakPoint("Two loss rule stopped");
+   }
+
 }
 
 
 void OnTick()
 {
+   twoLossRule();
+   //Alert("What is current server time: ",Hour(), ":",Minute(), "GMT: ", TimeGMT());
    double nDigits=CalculateNormalizedDigits();
    static bool EARunning = false;
    static bool tradeRunning = false;
@@ -131,19 +182,27 @@ void OnTick()
          // If Ask more than last close and 2nd candle is lower than lower band and last candle is higher than lower band (means movement upwards)
          if(Close[0] <= lowerBollingerBand){
             // Open a buy after analysing RSI...
-            if(RSI <= 20.5 && !tradeRunning){
+            if(RSI < 20 && !tradeRunning && allowBUY){
                Alert("your rsi value is: ", RSI);               
-               double takeProfit = upperBollingerBand;
+               //double takeProfit = upperBollingerBand;
+               double takeProfit = 0;
                // Open Buy for sure as currency pair is now been oversold            
                   double currentSpreadInPips = MarketInfo(Symbol(), MODE_SPREAD )/10;
-                  Alert((Bid - ((StopLoss + currentSpreadInPips) * nDigits)), " SL Calculation Where BID: ", Bid, " StopLoss Pip: ", StopLoss, " Ndigits: ", nDigits, "Spread (Pts): ", MarketInfo(Symbol(), MODE_SPREAD )/10); 
-                  ticket = OrderSend(Symbol(), OP_BUY, Lots, Ask, 3, (Bid - (StopLoss * 10 * nDigits)), takeProfit, "Set by Kman Test EA");
-                  if(ticket < 0){
-                     Alert("Error in the attempt to send the order!");
-                  }else{
-                     Alert("BUY Order executed successfully ticket #", ticket);
-                     tradeRunning = true;
-                  }               
+                  if(currentSpreadInPips <= 1){
+                     Alert((Bid - ((StopLoss + currentSpreadInPips) * nDigits)), " SL Calculation Where BID: ", Bid, " StopLoss Pip: ", StopLoss, " Ndigits: ", nDigits, "Spread (Pts): ", MarketInfo(Symbol(), MODE_SPREAD )/10); 
+                     ticket = OrderSend(Symbol(), OP_BUY, Lots, Ask, 3, (Bid - (StopLoss * nDigits)), takeProfit, "Set by Kman Test EA");
+                     if(ticket < 0){
+                        Alert("Error in the attempt to send the order!");
+                     }else{
+                        Alert("BUY Order executed successfully ticket #", ticket);
+                        tradeRunning = true;
+                        bool orderSelected = OrderSelect(ticket, SELECT_BY_TICKET);
+                        if(orderSelected){
+                           //BreakPoint("Price of Candle: " + Close[0] + " \nBB Val (Lower): " + lowerBollingerBand + " \n| RSI Value = "+ RSI +" \nEntry Price: "+ OrderOpenPrice() +"  \n| SL: "+((Bid - (((StopLoss * 10 * nDigits) + currentSpreadInPips))))+" \nSL PIPS: "+((StopLoss * 10 * nDigits) + currentSpreadInPips)+" \n[BUY OPENED]");
+                        }
+                        allowSELL = true;    
+                    }    
+                 } 
             }
          else {
          
@@ -162,10 +221,11 @@ void OnTick()
                   if(PipsProfit >= 20){
                      bool orderClosed = OrderClose(ticket, Lots, OrderClosePrice(), 10);
                      if(!orderClosed){
-                        Alert("Error Closing Order #", ticket);
+                        Alert("Error Closing Order #"+ ticket);
                      }else{
                         ticket = 0;
                         Alert("Order closed successfully as it's fully touched the other side!");
+                        //BreakPoint("Order closed #"+ ticket + "BB Val (Lower): " + lowerBollingerBand);
                      }
                   }
                }
@@ -180,19 +240,27 @@ void OnTick()
 
          if(Close[0] >= upperBollingerBand){
             // Open a sell after analysing RSI...
-            if(RSI >= 79.5 && !tradeRunning){
+            if(RSI > 80 && !tradeRunning && allowSELL){
                Alert("your rsi value is: ",RSI);
-               double takeProfit = lowerBollingerBand;
+               //double takeProfit = lowerBollingerBand;
+               double takeProfit = 0;
                // Open Sell for sure as currency pair is now been overbought
                   double currentSpreadInPips = MarketInfo(Symbol(), MODE_SPREAD )/10;
-                  ticket = OrderSend(Symbol(), OP_SELL, Lots, Bid, 3, (Ask + (((StopLoss * 10) + currentSpreadInPips) * nDigits)), takeProfit, "Set by Kman Test EA");
+                  if(currentSpreadInPips <= 1){
+                  //ticket = OrderSend(Symbol(), OP_SELL, Lots, Bid, 3, (Ask + (((StopLoss * 10 * nDigits) + currentSpreadInPips) * nDigits)), takeProfit, "Set by Kman Test EA");
+                  ticket = OrderSend(Symbol(), OP_SELL, Lots, Bid, 3, (Ask + (StopLoss * nDigits)), takeProfit, "Set by Kman Test EA");
                   if(ticket < 0){
                      Alert("Error in the attempt to send the order!");
                   }else{
                      Alert("SELL Order executed successfully ticket #", ticket);
                      tradeRunning = true;
+                     bool orderSelected = OrderSelect(ticket, SELECT_BY_TICKET);
+                     if(orderSelected){
+                        //BreakPoint("Price of Candle: " + Close[0] +" \nBB Val (upper): "+ upperBollingerBand + " \n| RSI Value = "+ RSI +" \nEntry Price: "+ OrderOpenPrice() +"  | SL: "+(Ask + (((StopLoss * 10 * nDigits) + currentSpreadInPips) * nDigits))+" \nSL PIPS: "+(((StopLoss * 10 * nDigits) + currentSpreadInPips) * nDigits)+" \n[SELL OPENED]");
+                     }
+                     allowBUY = true;
                   }
-                  
+                  }
               }else{
               
                   if(ticket > 0){
@@ -216,6 +284,7 @@ void OnTick()
                            }else{
                               ticket = 0;
                               Alert("Order closed successfully as it's fully touched the other side!");
+                              //BreakPoint("Order closed #" + ticket + "BB Val (upper): " + upperBollingerBand);
                            }
                         }
                      }
