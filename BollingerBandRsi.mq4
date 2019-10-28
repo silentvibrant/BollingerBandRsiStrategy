@@ -7,6 +7,7 @@
 #property link      ""
 #property version   "1.00"
 #property strict
+#include <WinUser32.mqh>
 
 extern int StartHour = 23;
 extern int StartMin = 30;
@@ -24,6 +25,38 @@ extern int RSI_PERIOD = 14;
 
 static int StopLoss = 0;
 
+static int point_compat;
+
+void BreakPoint(double BBLevel = 0)
+{
+   //It is expecting, that this function should work
+   //only in tester
+   if (!IsVisualMode()) return;
+   
+   //Preparing a data for printing
+   //Comment() function is used as 
+   //it give quite clear visualisation
+   string Comm="";
+   Comm=Comm+"Bid="+Bid+"\n";
+   Comm=Comm+"Ask="+Ask+"\n";
+   
+   Comment(Comm);
+   
+   if(BBLevel > 0){
+      Comment("BB Level:", BBLevel);
+   }
+   
+   //Press/release Pause button
+   //19 is a Virtual Key code of "Pause" button
+   //Sleep() is needed, because of the probability
+   //to misprocess too quick pressing/releasing
+   //of the button
+   keybd_event(19,0,0,0);
+   Sleep(100);
+   keybd_event(19,0,2,0);
+}
+
+
 double CalculateNormalizedDigits()
 {
    //If there are 3 or less digits (JPY for example) then return 0.01 which is the pip value
@@ -40,7 +73,6 @@ double CalculateNormalizedDigits()
 
 void OnInit()
 {
-    
    string financialInstrument = Symbol();
    if(financialInstrument == "EURUSD"){
       StopLoss = EURUSDSL;
@@ -54,6 +86,10 @@ void OnInit()
       Alert("This financial instrument is not setup to be used with this EA. Stopping....");
       ExpertRemove();
    } 
+   
+   if(Digits == 3 || Digits == 5) {
+      static int point_compat = 10;
+   }
 }
 
 
@@ -79,7 +115,6 @@ void OnTick()
    // If not between 9pm and 11:30pm, run the EA..
    if(!((Hour() <= StartHour && Minute() <= StartMin) && (Hour() >= CloseHour))){
       EARunning = true;
-      
       // Check if trade is running..
       bool orderSelected = OrderSelect(ticket, SELECT_BY_TICKET);
       if(orderSelected){
@@ -92,16 +127,14 @@ void OnTick()
          tradeRunning = false;
       }
       
-      if(!tradeRunning){
          // Analyse using Bollinger Bands and RSI
-         
          // If Ask more than last close and 2nd candle is lower than lower band and last candle is higher than lower band (means movement upwards)
-         if( (Ask > Close[1]) && (Close[2] < prevLowerBollingerBand) && Close[1] > lowerBollingerBand){
+         if(Close[0] <= lowerBollingerBand){
             // Open a buy after analysing RSI...
-            if(RSI < 20){
+            if(RSI < 20 && !tradeRunning){
+               Alert("your rsi value is: ", RSI);               
                double takeProfit = upperBollingerBand;
-               // Open Buy for sure as currency pair is now been oversold
-               if(!tradeRunning){
+               // Open Buy for sure as currency pair is now been oversold            
                   double currentSpreadInPips = MarketInfo(Symbol(), MODE_SPREAD )/10;
                   Alert((Bid - ((StopLoss + currentSpreadInPips) * nDigits)), " SL Calculation Where BID: ", Bid, " StopLoss Pip: ", StopLoss, " Ndigits: ", nDigits, "Spread (Pts): ", MarketInfo(Symbol(), MODE_SPREAD )/10); 
                   ticket = OrderSend(Symbol(), OP_BUY, Lots, Ask, 3, (Bid - (StopLoss * 10 * nDigits)), takeProfit, "Set by Kman Test EA");
@@ -110,19 +143,38 @@ void OnTick()
                   }else{
                      Alert("BUY Order executed successfully ticket #", ticket);
                      tradeRunning = true;
+                  }               
+            }
+         else {
+             // Trade is running... 
+            // Check if a sell trade is running and close it...
+            bool orderSelected = OrderSelect(ticket, SELECT_BY_TICKET);
+            if(orderSelected){
+               if(OrderCloseTime() == 0 && OrderType() == OP_SELL){
+                  // Ensure Trade at a minimum of 20 Pips Profit                  
+                  // NormalizeDouble(value, no of digits) 
+                  //#Digits is Open Price -  Current Price / Point for Instrument
+                  //No Of Digits - Number of Digits for Instrument
+                  //double PipsProfit = (NormalizeDouble(((OrderOpenPrice() - Bid) /MarketInfo(Symbol(),MODE_POINT)),(int)MarketInfo(Symbol(),MODE_DIGITS))) / point_compat;
+                  double PipsProfit = 20;
+                  if(PipsProfit >= 20){
+                     bool orderClosed = OrderClose(ticket, Lots, OrderClosePrice(), 10);
+                     if(!orderClosed){
+                        Alert("Error Closing Order #", ticket);
+                     }
                   }
                }
             }
-         
+         }
          // else If Bid less than last close and 2nd candle is higher than upper band and last candle is less than lower band (means movement downwards)   
          } 
-         
-         if( (Bid < Close[1]) && (Close[2] > prevUpperBollingerBand) && Close[1] < upperBollingerBand){
+
+         if(Close[0] >= upperBollingerBand){
             // Open a sell after analysing RSI...
-            if(RSI > 80){
+            if(RSI > 80 && !tradeRunning){
+               Alert("your rsi value is: ",RSI);
                double takeProfit = lowerBollingerBand;
                // Open Sell for sure as currency pair is now been overbought
-               if(!tradeRunning) {
                   double currentSpreadInPips = MarketInfo(Symbol(), MODE_SPREAD )/10;
                   ticket = OrderSend(Symbol(), OP_SELL, Lots, Bid, 3, (Ask + (((StopLoss * 10) + currentSpreadInPips) * nDigits)), takeProfit, "Set by Kman Test EA");
                   if(ticket < 0){
@@ -133,10 +185,29 @@ void OnTick()
                   }
                   
                }
+            else{
+             // Trade is running... 
+            // Check if a buy trade is running and close it...
+            bool orderSelected = OrderSelect(ticket, SELECT_BY_TICKET);
+            if(orderSelected){
+               if(OrderCloseTime() == 0 && OrderType() == OP_BUY){
+                  // Ensure Trade at a minimum of 20 Pips Profit
+                  
+                  // NormalizeDouble(value, no of digits) 
+                  //#Digits is Open Price -  Current Price / Point for Instrument
+                  //No Of Digits - Number of Digits for Instrument
+                  //double PipsProfit = (NormalizeDouble(((Ask - OrderOpenPrice()) /MarketInfo(Symbol(),MODE_POINT)),(int)MarketInfo(Symbol(),MODE_DIGITS))) / point_compat;
+                  double PipsProfit = 20;
+                  if(PipsProfit >= 20){
+                     bool orderClosed = OrderClose(ticket, Lots, OrderClosePrice(), 10);
+                     if(!orderClosed){
+                        Alert("Error Closing Order #", ticket);
+                     }
+                  }
+               }
+            }
             }
          }
-         
-      }
       
    }else{
       // Ensure EA has stopped running. E.g. close trades and reset ticket to 0.
