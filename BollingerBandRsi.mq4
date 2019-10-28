@@ -21,7 +21,7 @@ extern int CHFJPYSL = 5;
 extern double Lots = 1;
 
 extern int BB_PERIOD = 20;
-extern int RSI_PERIOD = 14;
+extern int RSI_PERIOD = 7;
 
 static int StopLoss = 0;
 
@@ -131,7 +131,7 @@ void OnTick()
          // If Ask more than last close and 2nd candle is lower than lower band and last candle is higher than lower band (means movement upwards)
          if(Close[0] <= lowerBollingerBand){
             // Open a buy after analysing RSI...
-            if(RSI < 20 && !tradeRunning){
+            if(RSI <= 20.5 && !tradeRunning){
                Alert("your rsi value is: ", RSI);               
                double takeProfit = upperBollingerBand;
                // Open Buy for sure as currency pair is now been oversold            
@@ -146,6 +146,8 @@ void OnTick()
                   }               
             }
          else {
+         
+         if(ticket > 0){
              // Trade is running... 
             // Check if a sell trade is running and close it...
             bool orderSelected = OrderSelect(ticket, SELECT_BY_TICKET);
@@ -161,17 +163,24 @@ void OnTick()
                      bool orderClosed = OrderClose(ticket, Lots, OrderClosePrice(), 10);
                      if(!orderClosed){
                         Alert("Error Closing Order #", ticket);
+                     }else{
+                        ticket = 0;
+                        Alert("Order closed successfully as it's fully touched the other side!");
                      }
                   }
                }
+            }else{
+               Alert("Order is not selected!");
             }
+            
+            }        
          }
          // else If Bid less than last close and 2nd candle is higher than upper band and last candle is less than lower band (means movement downwards)   
          } 
 
          if(Close[0] >= upperBollingerBand){
             // Open a sell after analysing RSI...
-            if(RSI > 80 && !tradeRunning){
+            if(RSI >= 79.5 && !tradeRunning){
                Alert("your rsi value is: ",RSI);
                double takeProfit = lowerBollingerBand;
                // Open Sell for sure as currency pair is now been overbought
@@ -184,28 +193,37 @@ void OnTick()
                      tradeRunning = true;
                   }
                   
-               }
-            else{
-             // Trade is running... 
-            // Check if a buy trade is running and close it...
-            bool orderSelected = OrderSelect(ticket, SELECT_BY_TICKET);
-            if(orderSelected){
-               if(OrderCloseTime() == 0 && OrderType() == OP_BUY){
-                  // Ensure Trade at a minimum of 20 Pips Profit
-                  
-                  // NormalizeDouble(value, no of digits) 
-                  //#Digits is Open Price -  Current Price / Point for Instrument
-                  //No Of Digits - Number of Digits for Instrument
-                  //double PipsProfit = (NormalizeDouble(((Ask - OrderOpenPrice()) /MarketInfo(Symbol(),MODE_POINT)),(int)MarketInfo(Symbol(),MODE_DIGITS))) / point_compat;
-                  double PipsProfit = 20;
-                  if(PipsProfit >= 20){
-                     bool orderClosed = OrderClose(ticket, Lots, OrderClosePrice(), 10);
-                     if(!orderClosed){
-                        Alert("Error Closing Order #", ticket);
+              }else{
+              
+                  if(ticket > 0){
+                  // Trade is running... 
+                  // Check if a buy trade is running and close it...
+                  bool orderSelected = OrderSelect(ticket, SELECT_BY_TICKET);
+                  if(orderSelected){
+                     if(OrderCloseTime() == 0 && OrderType() == OP_BUY){
+                        // Ensure Trade at a minimum of 20 Pips Profit
+                        
+                        // NormalizeDouble(value, no of digits) 
+                        //#Digits is Open Price -  Current Price / Point for Instrument
+                        //No Of Digits - Number of Digits for Instrument
+                        //double PipsProfit = (NormalizeDouble(((Ask - OrderOpenPrice()) /MarketInfo(Symbol(),MODE_POINT)),(int)MarketInfo(Symbol(),MODE_DIGITS))) / point_compat;
+                        double PipsProfit = 20;
+                        if(PipsProfit >= 20){
+                           bool orderClosed = OrderClose(ticket, Lots, OrderClosePrice(), 10);
+                           
+                           if(!orderClosed){
+                              Alert("Error Closing Order #", ticket);
+                           }else{
+                              ticket = 0;
+                              Alert("Order closed successfully as it's fully touched the other side!");
+                           }
+                        }
                      }
+                  }else{
+                     Alert("Order not selected!");
                   }
-               }
-            }
+                  
+                  }
             }
          }
       
