@@ -24,9 +24,12 @@ extern int BB_PERIOD = 20;
 extern int RSI_PERIOD = 7;
 
 static int StopLoss = 0;
+static int CandlesRecognised =  0;
 
 static int point_compat;
-static int numberOfLosses = 0;
+
+static int orderComparisonOne = -1;
+static int orderComparisonTwo = -1;
 static bool allowBUY = true;
 static bool allowSELL = true;
 
@@ -99,52 +102,86 @@ void OnInit()
    
 }
 
-void twoLossRule(){
-   int totalOrderArray = OrdersTotal() - 1;
-   int lastOrder = totalOrderArray;
-   int secondToLastOrder = totalOrderArray - 1;
-   if(OrderSelect(lastOrder, SELECT_BY_POS)){
-      bool lastOrderHitSL;
-      if(OrderType() == OP_BUY){
-          lastOrderHitSL = OrderClosePrice() <= OrderStopLoss();
-      }else{
-          lastOrderHitSL = OrderClosePrice() >= OrderStopLoss();
+bool twoLossRule(){
+   //Alert(OrdersHistoryTotal(), " - Number of Trades");
+   if(OrdersHistoryTotal() >= 2){
+      int totalNumberOfOrders = OrdersHistoryTotal();
+      int lastOrder = totalNumberOfOrders - 1;
+      int secondToLastOrder = totalNumberOfOrders - 2;
+      
+      if(( orderComparisonOne == secondToLastOrder || orderComparisonOne == lastOrder) && (orderComparisonTwo == secondToLastOrder || orderComparisonTwo == lastOrder)){
+         return false;
       }
-      if(OrderCloseTime() != 0 && lastOrderHitSL){
-         if(OrderSelect(secondToLastOrder, SELECT_BY_POS)){
-            bool secondToLastOrderHitSL;
-            if(OrderType() == OP_BUY){
-                secondToLastOrderHitSL = OrderClosePrice() <= OrderStopLoss();
-            }else{
-                secondToLastOrderHitSL = OrderClosePrice() >= OrderStopLoss();
-            }
-            if(OrderCloseTime() != 0 && secondToLastOrderHitSL){
-               numberOfLosses += 1;
-               if(numberOfLosses >= 2){
-                  if(OrderType() == OP_BUY){
-                     allowBUY = false;
-                     numberOfLosses = 0;
-                  }else{
-                     // OP_SELL
-                     allowSELL = false;
-                     numberOfLosses = 0;
-                  }
-               }
-            }
-         }else{
-            BreakPoint("Two loss rule stopped");
-         }
-      } 
+      
+      double firstOrderClosePrice;
+      double firstOrderSL;
+      int firstOrderType;
+      datetime firstOrderTime;
+      bool firstOrderHitSL;
+      
+      double secondOrderClosePrice;
+      double secondOrderSL;
+      int secondOrderType;
+      datetime secondOrderTime;
+      bool secondOrderHitSL;
+      
+      bool selectFirstOrder = OrderSelect(lastOrder, SELECT_BY_POS, MODE_HISTORY);
+      if(selectFirstOrder){
+         firstOrderClosePrice = OrderClosePrice();
+         firstOrderSL = OrderStopLoss();
+         firstOrderType = OrderType();
+         firstOrderTime = OrderCloseTime();
+         firstOrderHitSL = (firstOrderType == OP_BUY ? (OrderClosePrice() <= OrderStopLoss()) : OrderClosePrice() >= OrderStopLoss());
+      }else{
+         return false;
+      }
+      
+      bool selectSecondOrder = OrderSelect(secondToLastOrder, SELECT_BY_POS, MODE_HISTORY);
+      if(selectSecondOrder){
+         secondOrderClosePrice = OrderClosePrice();
+         secondOrderSL = OrderStopLoss();
+         secondOrderType = OrderType();
+         secondOrderTime = OrderCloseTime();
+         secondOrderHitSL = (secondOrderType == OP_BUY ? (OrderClosePrice() <= OrderStopLoss()) : OrderClosePrice() >= OrderStopLoss());
+      }else{
+         return false;
+      }
+      
+      bool matchingOrderType = ((firstOrderType == OP_BUY && secondOrderType == OP_BUY) || (firstOrderType == OP_SELL && secondOrderType == OP_SELL));
+      bool bothHitSL = (firstOrderHitSL && secondOrderHitSL);
+      bool bothOrdersClosed = (firstOrderTime > 0 && secondOrderTime > 0); 
+      if(!matchingOrderType || !bothHitSL || !bothOrdersClosed){
+         return false;
+      }
+      
+      orderComparisonOne = lastOrder;
+      orderComparisonTwo = secondToLastOrder;
+     
+      if(firstOrderType == OP_BUY){
+         allowBUY = false;
+      }else{
+         allowSELL = false;
+      }
+      return true;
+      
+      
    }else{
-      BreakPoint("Two loss rule stopped");
+      Alert("Not two trades yet...");
+      return false;
    }
-
+   
+   return false;
 }
 
 
 void OnTick()
 {
-   twoLossRule();
+   bool twoLossRuleActivated = twoLossRule();
+   if(twoLossRuleActivated){
+      Alert("Two Loss Rule Activated");
+   }else{
+     //Alert("Two Loss Rule Not Activated");
+   }
    //Alert("What is current server time: ",Hour(), ":",Minute(), "GMT: ", TimeGMT());
    double nDigits=CalculateNormalizedDigits();
    static bool EARunning = false;
@@ -177,18 +214,21 @@ void OnTick()
       }else{
          tradeRunning = false;
       }
+      bool minimumPipDistance = ((upperBollingerBand - lowerBollingerBand)/10 >= 10 ? true : true);      
       
          // Analyse using Bollinger Bands and RSI
          // If Ask more than last close and 2nd candle is lower than lower band and last candle is higher than lower band (means movement upwards)
          if(Close[0] <= lowerBollingerBand){
             // Open a buy after analysing RSI...
-            if(RSI < 20 && !tradeRunning && allowBUY){
+            Alert("minimum Pip Distance: " + minimumPipDistance);
+            if(RSI < 20 && !tradeRunning && allowBUY && (Bars != CandlesRecognised) && minimumPipDistance){
                Alert("your rsi value is: ", RSI);               
                //double takeProfit = upperBollingerBand;
                double takeProfit = 0;
                // Open Buy for sure as currency pair is now been oversold            
                   double currentSpreadInPips = MarketInfo(Symbol(), MODE_SPREAD )/10;
-                  if(currentSpreadInPips <= 1){
+                  if(currentSpreadInPips <= 1.6){
+                     CandlesRecognised = Bars;
                      Alert((Bid - ((StopLoss + currentSpreadInPips) * nDigits)), " SL Calculation Where BID: ", Bid, " StopLoss Pip: ", StopLoss, " Ndigits: ", nDigits, "Spread (Pts): ", MarketInfo(Symbol(), MODE_SPREAD )/10); 
                      ticket = OrderSend(Symbol(), OP_BUY, Lots, Ask, 3, (Bid - (StopLoss * nDigits)), takeProfit, "Set by Kman Test EA");
                      if(ticket < 0){
@@ -240,13 +280,14 @@ void OnTick()
 
          if(Close[0] >= upperBollingerBand){
             // Open a sell after analysing RSI...
-            if(RSI > 80 && !tradeRunning && allowSELL){
+            if(RSI > 80 && !tradeRunning && allowSELL && (Bars != CandlesRecognised) && minimumPipDistance){
                Alert("your rsi value is: ",RSI);
                //double takeProfit = lowerBollingerBand;
                double takeProfit = 0;
                // Open Sell for sure as currency pair is now been overbought
                   double currentSpreadInPips = MarketInfo(Symbol(), MODE_SPREAD )/10;
-                  if(currentSpreadInPips <= 1){
+                  if(currentSpreadInPips <= 1.6){
+                  CandlesRecognised = Bars;
                   //ticket = OrderSend(Symbol(), OP_SELL, Lots, Bid, 3, (Ask + (((StopLoss * 10 * nDigits) + currentSpreadInPips) * nDigits)), takeProfit, "Set by Kman Test EA");
                   ticket = OrderSend(Symbol(), OP_SELL, Lots, Bid, 3, (Ask + (StopLoss * nDigits)), takeProfit, "Set by Kman Test EA");
                   if(ticket < 0){
